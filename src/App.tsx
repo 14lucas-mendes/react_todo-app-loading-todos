@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { UserWarning } from './UserWarning';
 import { USER_ID } from './api/todos';
 import { client } from './utils/fetchClient';
-import { Todo } from './types.ts'; // Corrigido: Adicionada a extensão
+import { Todo } from './types/Todo';
 
 export const App: React.FC = () => {
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -13,19 +13,20 @@ export const App: React.FC = () => {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
 
-  if (!USER_ID) {
-    return <UserWarning />;
-  }
-
-  // eslint-disable-next-line react-hooks/rules-of-hooks
+  // ...existing code...
   useEffect(() => {
     setLoadingAction('load');
     client
-      .get<Todo[]>('/todos')
+      .get<Todo[]>('/todos?userId=3111')
       .then(setTodos)
       .catch(() => setErrorMessage('Unable to load todos'))
       .finally(() => setLoadingAction(null));
   }, []);
+  // ...existing code...
+
+  if (!USER_ID) {
+    return <UserWarning />;
+  }
 
   const handleAddTodo = (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,19 +63,24 @@ export const App: React.FC = () => {
       .finally(() => setLoadingAction(null));
   };
 
-  const handleToggleTodo = (todo: Todo) => {
-    setLoadingAction(`toggle-${todo.id}`);
+  const handleToggleCompleted = (id: number) => {
+    setLoadingAction(`toggle-${id}`);
+    const todo = todos.find(t => t.id === id);
+
+    if (!todo) {
+      return;
+    }
+
     client
-      .patch<Todo>(`/todos/${todo.id}`, {
-      ...todo,
-      completed: !todo.completed,
-    })
-      .then(updatedTodo => {
+      .patch<Todo>(`/todos/${id}`, { completed: !todo.completed })
+      .then((updatedTodo: Todo) => {
         setTodos(prev =>
-          prev.map(t => (t.id === updatedTodo.id ? updatedTodo : t)),
+          prev.map(t =>
+            t.id === id ? { ...t, completed: updatedTodo.completed } : t
+          )
         );
       })
-      .catch(() => setErrorMessage('Unable to update a todo'))
+      .catch(() => setErrorMessage('Unable to update todo'))
       .finally(() => setLoadingAction(null));
   };
 
@@ -95,6 +101,24 @@ export const App: React.FC = () => {
       .finally(() => setLoadingAction(null));
   };
 
+  const handleToggleAll = () => {
+    const shouldCompleteAll = todos.some(todo => !todo.completed);
+
+    setLoadingAction('toggle-all');
+    Promise.all(
+      todos.map(todo =>
+        client.patch(`/todos/${todo.id}`, { completed: shouldCompleteAll })
+      )
+    )
+      .then(() => {
+        setTodos(prev =>
+          prev.map(todo => ({ ...todo, completed: shouldCompleteAll }))
+        );
+      })
+      .catch(() => setErrorMessage('Unable to toggle all todos'))
+      .finally(() => setLoadingAction(null));
+  };
+
   return (
     <div className="todoapp">
       <h1 className="todoapp__title">todos</h1>
@@ -105,22 +129,8 @@ export const App: React.FC = () => {
             type="button"
             className={`todoapp__toggle-all ${activeTodosCount === 0 ? 'active' : ''}`}
             data-cy="ToggleAllButton"
-            onClick={() => {
-              const updatedTodos = todos.map(todo => ({
-                ...todo,
-                completed: activeTodosCount > 0,
-              }));
-
-              setLoadingAction('toggle-all');
-              Promise.all(
-                updatedTodos.map(todo =>
-                  client.patch<Todo>(`/todos/${todo.id}`, todo),
-                ),
-              )
-                .then(() => setTodos(updatedTodos))
-                .catch(() => setErrorMessage('Unable to toggle all todos'))
-                .finally(() => setLoadingAction(null));
-            }}
+            onClick={handleToggleAll}
+            disabled={loadingAction === 'toggle-all'}
           />
 
           <form onSubmit={handleAddTodo}>
@@ -149,7 +159,7 @@ export const App: React.FC = () => {
                   type="checkbox"
                   className="todo__status"
                   checked={todo.completed}
-                  onChange={() => handleToggleTodo(todo)}
+                  onChange={() => handleToggleCompleted(todo.id)}
                   disabled={loadingAction === `toggle-${todo.id}`}
                 />
               </label>
@@ -203,15 +213,17 @@ export const App: React.FC = () => {
               </a>
             </nav>
 
-            <button
-              type="button"
-              className="todoapp__clear-completed"
-              data-cy="ClearCompletedButton"
-              onClick={clearCompleted}
-              disabled={!hasCompletedTodos || loadingAction === 'clear'}
-            >
-              Clear completed
-            </button>
+            {hasCompletedTodos && (
+              <button
+                type="button"
+                className="todoapp__clear-completed"
+                data-cy="ClearCompletedButton"
+                onClick={clearCompleted}
+                disabled={loadingAction === 'clear'}
+              >
+                Clear completed
+              </button>
+            )}
           </footer>
         </div>
       )}
